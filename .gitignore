@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+RAG-system-contract.md
+failure-modes.md
 # Distribution / packaging
 .Python
 build/
