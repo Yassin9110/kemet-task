@@ -8,6 +8,8 @@ __pycache__/
 
 RAG-system-contract.md
 failure-modes.md
+project-roadmap.md
+docs
 # Distribution / packaging
 .Python
 build/
