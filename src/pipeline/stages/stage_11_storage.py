@@ -17,7 +17,7 @@ from src.models.document import Document
 from src.models.chunks import ParentChunk, ChildChunk
 from src.models.edges import SemanticEdge
 from src.storage.json_storage import StorageManager
-from src.storage.vector_storage import create_vector_storage_from_config
+from src.storage.vector_storage import VectorStorage
 
 
 @dataclass
@@ -75,7 +75,7 @@ class StorageStage:
     STAGE_NUMBER = 11
     TOTAL_STAGES = 11
     
-    def __init__(self, config: PipelineConfig):
+    def __init__(self, config: PipelineConfig, vector_storage: VectorStorage):
         """
         Initialize the storage stage.
         
@@ -84,7 +84,7 @@ class StorageStage:
         """
         self.config = config
         self.storage = StorageManager.from_config(config)
-        self.vector_storage = create_vector_storage_from_config(config)
+        self.vector_storage = vector_storage
     
     def execute(
         self,
@@ -136,28 +136,32 @@ class StorageStage:
                 ingestion_status=IngestionStatus.COMPLETED,
                 processing_duration_ms=processing_duration_ms
             )
-
+            print(f"\n\n Created doc {document} \n\n")
             # Store document metadata
             self._store_document(document)
             stats['document_stored'] = True
             
             # Store parent chunks
             if input_data.parent_chunks:
+                print("\n Storing parent chunks \n")
                 self._store_parents(input_data.parent_chunks)
                 stats['parents_stored'] = len(input_data.parent_chunks)
             
             # Store child chunks (JSON backup)
             if input_data.child_chunks:
+                print("\n Storing child chunks \n")
                 self._store_children_json(input_data.child_chunks)
                 stats['children_stored_json'] = len(input_data.child_chunks)
             
             # Store child chunks (vector storage)
             if input_data.child_chunks:
+                print("\n Storing vectors \n")
                 self._store_children_vectors(input_data.child_chunks)
                 stats['children_stored_vector'] = len(input_data.child_chunks)
-            
+                print(f"\n\n Stats children_stored_vector{stats['children_stored_vector']}\n\n ")
             # Store semantic edges
             if input_data.semantic_edges:
+                print("\n Storing edges \n")
                 self._store_edges(input_data.semantic_edges)
                 stats['edges_stored'] = len(input_data.semantic_edges)
             
@@ -171,13 +175,13 @@ class StorageStage:
         
         # Calculate duration
         duration_ms = int((time.time() - start_time) * 1000)
-        
+        print(f"\n\nThis is stage 11 {duration_ms}\n\n")
         # Log completion
         logger.info(
             f"[Stage {self.STAGE_NUMBER}/{self.TOTAL_STAGES}] "
             f"{self.STAGE_NAME} ✓ ({duration_ms}ms)"
         )
-        logger.info("  → Vectors stored in Chroma")
+        logger.info("  → Vectors stored in Qdrant")
         logger.info("  → Metadata stored in JSON")
         
         return StorageOutput(
@@ -255,10 +259,12 @@ class StorageStage:
             chunk for chunk in children
             if chunk.embedding is not None
         ]
+        
 
         # Add each chunk individually to vector storage
-        for chunk in chunks_with_embeddings:
-            self.vector_storage.add(chunk)
+        num_of_chunks = self.vector_storage.add_many(chunks_with_embeddings)
+        print(f"\n num of chunks added{num_of_chunks}\n")
+        return num_of_chunks
     
     def _store_edges(self, edges: List[SemanticEdge]) -> None:
         """
@@ -285,7 +291,7 @@ class StorageCleanup:
     Utility class for cleaning up storage on failed ingestion.
     """
     
-    def __init__(self, config: PipelineConfig):
+    def __init__(self, config: PipelineConfig, vector_storage: VectorStorage):
         """
         Initialize storage cleanup.
         
@@ -294,7 +300,7 @@ class StorageCleanup:
         """
         self.config = config
         self.storage = StorageManager.from_config(config)
-        self.vector_storage = create_vector_storage_from_config(config)
+        self.vector_storage = vector_storage
     
     def cleanup_document(self, document_id: str) -> bool:
         """

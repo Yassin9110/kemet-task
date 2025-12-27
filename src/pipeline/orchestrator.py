@@ -143,15 +143,16 @@ class PipelineOrchestrator:
         """
         self.config = config or PipelineConfig()
         self.logger = create_logger_from_config(self.config)
+        self.vector_storage = create_vector_storage_from_config(self.config)
         
         # Initialize stages
         self._init_stages()
         
         # Initialize storage
         self.json_storage = StorageManager.from_config(self.config)
-        self.vector_storage = create_vector_storage_from_config(self.config)
+        
         self.file_storage = FileStorage(self.config.raw_files_path)
-        self.storage_cleanup = StorageCleanup(self.config)
+        self.storage_cleanup = StorageCleanup(self.config, self.vector_storage)
     
     def _init_stages(self) -> None:
         """Initialize all pipeline stages."""
@@ -165,7 +166,7 @@ class PipelineOrchestrator:
         self.stage_chunking = ChunkingStage(self.config)
         self.stage_embedding = EmbeddingStage(self.config)
         self.stage_graph_building = GraphBuildingStage(self.config)
-        self.stage_storage = StorageStage(self.config)
+        self.stage_storage = StorageStage(self.config, self.vector_storage)
     
     def ingest(self, file_path: str, metadata: Optional[Dict] = None) -> IngestionResult:
         """
@@ -311,7 +312,7 @@ class PipelineOrchestrator:
                 ),
                 self.logger
             )
-            
+            print(f"\n\n storage stage output: {storage_output}\n\n")
             # Calculate final duration
             end_time = datetime.now()
             duration_ms = int((end_time - start_time).total_seconds() * 1000)

@@ -18,5 +18,5 @@ from .vector_storage import (
     SearchResult,
     VectorStoreStats,
     create_vector_storage_from_config,
-    CHROMADB_AVAILABLE,
+    QDRANT_AVAILABLE,
 )

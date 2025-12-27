@@ -1,7 +1,7 @@
 """
 Vector storage utilities for the Multilingual RAG Ingestion Pipeline.
 
-This module provides a wrapper around ChromaDB for storing and searching
+This module provides a wrapper around Qdrant for storing and searching
 chunk embeddings. It handles serialization of chunk metadata and provides
 filtering capabilities.
 """
@@ -12,13 +12,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union, Callable
 
-# Try to import chromadb
+# Try to import qdrant_client
 try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMADB_AVAILABLE = True
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import (
+        Distance,
+        VectorParams,
+        PointStruct,
+        Filter,
+        FieldCondition,
+        MatchValue,
+        PointIdsList,
+        FilterSelector,
+        PointVectors,
+    )
+    QDRANT_AVAILABLE = True
 except ImportError:
-    CHROMADB_AVAILABLE = False
+    QDRANT_AVAILABLE = False
 
 from ..models.chunks import ChildChunk
 from ..models.enums import Language, BlockType
@@ -88,7 +98,7 @@ class VectorStoreStats:
     """Number of unique documents."""
     
     collection_name: str
-    """Name of the Chroma collection."""
+    """Name of the Qdrant collection."""
     
     persist_directory: Optional[str]
     """Path to persistence directory."""
@@ -102,11 +112,13 @@ class VectorStoreStats:
 
 class VectorStorage:
     """
-    Vector storage using ChromaDB.
+    Vector storage using Qdrant.
     
     Stores chunk embeddings with metadata for similarity search.
     Supports filtering by document, language, and other metadata.
     """
+    
+    DEFAULT_BATCH_SIZE = 100
     
     def __init__(
         self,
@@ -119,50 +131,73 @@ class VectorStorage:
         
         Args:
             persist_directory: Directory for persistent storage (None for in-memory).
-            collection_name: Name for the Chroma collection.
+            collection_name: Name for the Qdrant collection.
             embedding_dimension: Expected embedding dimension (for validation).
             
         Raises:
-            ImportError: If chromadb is not installed.
+            ImportError: If qdrant-client is not installed.
         """
-        if not CHROMADB_AVAILABLE:
+        if not QDRANT_AVAILABLE:
             raise ImportError(
-                "chromadb is required for VectorStorage. "
-                "Install it with: pip install chromadb"
+                "qdrant-client is required for VectorStorage. "
+                "Install it with: pip install qdrant-client"
             )
         
         self.persist_directory = Path(persist_directory) if persist_directory else None
         self.collection_name = collection_name
         self.embedding_dimension = embedding_dimension
         
-        # Initialize ChromaDB client
+        # Initialize Qdrant client
         self._client = self._create_client()
-        self._collection = self._get_or_create_collection()
+        self._ensure_collection_exists()
     
-    def _create_client(self) -> "chromadb.Client":
-        """Create ChromaDB client."""
+    def _create_client(self) -> "QdrantClient":
+        """Create Qdrant client."""
+        # Add traceback for debugging multiple calls
+        import traceback
+        
+        if not hasattr(self.__class__, '_client_creation_counter'):
+            self.__class__._client_creation_counter = 0
+        
+        self.__class__._client_creation_counter += 1
+        
+        print(f"[DEBUG] _create_client() called #{self.__class__._client_creation_counter}")
+        print(f"  Persist Directory: {self.persist_directory}")
+        
+        # Print where it's being called from (last 3 stack frames)
+        stack = traceback.extract_stack()[-4:-1]
+        for frame in stack:
+            print(f"  Called from: {frame.filename}:{frame.lineno} in {frame.name}")
+        
         if self.persist_directory:
             self.persist_directory.mkdir(parents=True, exist_ok=True)
-            
-            return chromadb.PersistentClient(path=str(self.persist_directory))
+            return QdrantClient(path=str(self.persist_directory))
         else:
             # In-memory client
-            return chromadb.EphemeralClient()
+            return QdrantClient(":memory:")
     
-    def _get_or_create_collection(self) -> "chromadb.Collection":
-        """Get or create the chunks collection."""
-        return self._client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"}  # Use cosine similarity
-        )
-    
-    def _chunk_to_metadata(self, chunk: ChildChunk) -> Dict[str, Any]:
-        """
-        Convert chunk to metadata dictionary for storage.
+    def _ensure_collection_exists(self) -> None:
+        """Ensure the collection exists, create if not."""
+        collections = self._client.get_collections().collections
+        collection_names = [c.name for c in collections]
         
-        Chroma only supports str, int, float, bool in metadata.
+        if self.collection_name not in collection_names:
+            self._client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(
+                    size=self.embedding_dimension,
+                    distance=Distance.COSINE,
+                ),
+            )
+    
+    def _chunk_to_payload(self, chunk: ChildChunk) -> Dict[str, Any]:
         """
-        metadata = {
+        Convert chunk to payload dictionary for storage.
+        
+        Includes text in payload (unlike ChromaDB which stores separately).
+        """
+        payload = {
+            "text": chunk.text,
             "document_id": chunk.document_id,
             "language": chunk.language.value,
             "block_type": chunk.block_type.value,
@@ -173,22 +208,26 @@ class VectorStorage:
         
         # Optional fields
         if chunk.parent_id:
-            metadata["parent_id"] = chunk.parent_id
+            payload["parent_id"] = chunk.parent_id
         
         if chunk.page_number is not None:
-            metadata["page_number"] = chunk.page_number
+            payload["page_number"] = chunk.page_number
         
         if chunk.prev_chunk_id:
-            metadata["prev_chunk_id"] = chunk.prev_chunk_id
+            payload["prev_chunk_id"] = chunk.prev_chunk_id
         
         if chunk.next_chunk_id:
-            metadata["next_chunk_id"] = chunk.next_chunk_id
+            payload["next_chunk_id"] = chunk.next_chunk_id
         
         if chunk.section_path:
-            # Store as JSON string since Chroma doesn't support lists
-            metadata["section_path"] = "|".join(chunk.section_path)
+            # Store as pipe-separated string for consistency
+            payload["section_path"] = "|".join(chunk.section_path)
         
-        return metadata
+        return payload
+    
+    def _payload_to_metadata(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract metadata from payload (excluding text for backward compatibility)."""
+        return {k: v for k, v in payload.items() if k != "text"}
     
     def _metadata_to_chunk_data(
         self,
@@ -229,6 +268,36 @@ class VectorStorage:
                 f"expected {self.embedding_dimension}, got {len(embedding)}"
             )
     
+    def _build_filter(self, where: Optional[Dict[str, Any]]) -> Optional[Filter]:
+        """
+        Convert a simple where dict to Qdrant Filter.
+        
+        Supports simple key-value matching for backward compatibility
+        with ChromaDB-style filters.
+        
+        Args:
+            where: Dict like {"document_id": "doc1", "language": "en"}
+            
+        Returns:
+            Qdrant Filter object or None if where is empty/None.
+        """
+        if not where:
+            return None
+        
+        conditions = []
+        for key, value in where.items():
+            conditions.append(
+                FieldCondition(
+                    key=key,
+                    match=MatchValue(value=value),
+                )
+            )
+        
+        if not conditions:
+            return None
+        
+        return Filter(must=conditions)
+    
     def add(self, chunk: ChildChunk) -> None:
         """
         Add a single chunk to the vector store.
@@ -244,19 +313,24 @@ class VectorStorage:
         
         self._validate_embedding(chunk.embedding, chunk.chunk_id)
         
-        self._collection.add(
-            ids=[chunk.chunk_id],
-            embeddings=[chunk.embedding],
-            documents=[chunk.text],
-            metadatas=[self._chunk_to_metadata(chunk)],
+        point = PointStruct(
+            id=chunk.chunk_id,
+            vector=chunk.embedding,
+            payload=self._chunk_to_payload(chunk),
+        )
+        
+        self._client.upsert(
+            collection_name=self.collection_name,
+            points=[point],
         )
     
-    def add_many(self, chunks: List[ChildChunk]) -> int:
+    def add_many(self, chunks: List[ChildChunk], batch_size: Optional[int] = None) -> int:
         """
         Add multiple chunks to the vector store.
         
         Args:
             chunks: List of ChildChunks with embeddings.
+            batch_size: Number of chunks per batch (default: 100).
             
         Returns:
             Number of chunks added.
@@ -267,28 +341,40 @@ class VectorStorage:
         if not chunks:
             return 0
         
-        ids = []
-        embeddings = []
-        documents = []
-        metadatas = []
+        if batch_size is None:
+            batch_size = self.DEFAULT_BATCH_SIZE
+        
+        points = []
+        print("\n\n in add many function\n")
         
         for chunk in chunks:
             if chunk.embedding is None:
                 raise ValueError(f"Chunk {chunk.chunk_id} has no embedding")
             
             self._validate_embedding(chunk.embedding, chunk.chunk_id)
+
+            point_id = chunk.chunk_id
+            if point_id.startswith("chunk-"):
+                point_id = point_id[6:]  # Remove "chunk-" prefix (6 characters)
             
-            ids.append(chunk.chunk_id)
-            embeddings.append(chunk.embedding)
-            documents.append(chunk.text)
-            metadatas.append(self._chunk_to_metadata(chunk))
+            points.append(PointStruct(
+                id=point_id,
+                vector=chunk.embedding,
+                payload=self._chunk_to_payload(chunk),
+            ))
         
-        self._collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas,
-        )
+        print("\n\n Ready for adding collection \n\n")
+        print(f"Points: {len(points)}")
+        
+        # Batch upsert
+        for i in range(0, len(points), batch_size):
+            batch = points[i:i + batch_size]
+            self._client.upsert(
+                collection_name=self.collection_name,
+                points=batch,
+            )
+        
+        print(f"collection added with chunks {len(chunks)}")
         
         return len(chunks)
     
@@ -305,45 +391,47 @@ class VectorStorage:
         Args:
             query_embedding: Query embedding vector.
             top_k: Number of results to return.
-            where: Optional metadata filter (Chroma where clause).
+            where: Optional metadata filter (dict with key-value pairs).
             include_embeddings: Whether to include embeddings in results.
             
         Returns:
             List of SearchResult ordered by similarity.
         """
-        include = ["documents", "metadatas", "distances"]
-        if include_embeddings:
-            include.append("embeddings")
+        query_filter = self._build_filter(where)
         
-        results = self._collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=where,
-            include=include,
+        results = self._client.search(
+            collection_name=self.collection_name,
+            query_vector=query_embedding,
+            limit=top_k,
+            query_filter=query_filter,
+            with_payload=True,
+            with_vectors=include_embeddings,
         )
         
         search_results = []
         
-        if results and results["ids"] and results["ids"][0]:
-            ids = results["ids"][0]
-            documents = results["documents"][0] if results["documents"] else [None] * len(ids)
-            metadatas = results["metadatas"][0] if results["metadatas"] else [{}] * len(ids)
-            distances = results["distances"][0] if results["distances"] else [0.0] * len(ids)
-            embeddings = results.get("embeddings", [[None] * len(ids)])[0] if include_embeddings else [None] * len(ids)
+        for hit in results:
+            payload = hit.payload or {}
+            text = payload.get("text", "")
+            metadata = self._payload_to_metadata(payload)
             
-            for i, chunk_id in enumerate(ids):
-                # Convert distance to similarity score (for cosine: similarity = 1 - distance)
-                distance = distances[i] if distances else 0.0
-                score = 1.0 - distance
-                
-                search_results.append(SearchResult(
-                    chunk_id=chunk_id,
-                    text=documents[i] or "",
-                    distance=distance,
-                    score=score,
-                    metadata=metadatas[i] or {},
-                    embedding=embeddings[i] if include_embeddings else None,
-                ))
+            # Qdrant returns score (higher = more similar for cosine)
+            # Convert to distance for backward compatibility
+            score = hit.score
+            distance = 1.0 - score
+            
+            embedding = None
+            if include_embeddings and hit.vector:
+                embedding = list(hit.vector) if not isinstance(hit.vector, list) else hit.vector
+            
+            search_results.append(SearchResult(
+                chunk_id=str(hit.id),
+                text=text,
+                distance=distance,
+                score=score,
+                metadata=metadata,
+                embedding=embedding,
+            ))
         
         return search_results
     
@@ -399,25 +487,27 @@ class VectorStorage:
         Returns:
             Chunk data dictionary or None if not found.
         """
-        include = ["documents", "metadatas"]
-        if include_embedding:
-            include.append("embeddings")
-        
-        results = self._collection.get(
+        results = self._client.retrieve(
+            collection_name=self.collection_name,
             ids=[chunk_id],
-            include=include,
+            with_payload=True,
+            with_vectors=include_embedding,
         )
         
-        if results and results["ids"]:
-            idx = 0
+        if results:
+            point = results[0]
+            payload = point.payload or {}
+            text = payload.get("text", "")
+            metadata = self._payload_to_metadata(payload)
+            
             embedding = None
-            if include_embedding and results.get("embeddings"):
-                embedding = results["embeddings"][idx]
+            if include_embedding and point.vector:
+                embedding = list(point.vector) if not isinstance(point.vector, list) else point.vector
             
             return self._metadata_to_chunk_data(
-                chunk_id=results["ids"][idx],
-                text=results["documents"][idx] if results["documents"] else "",
-                metadata=results["metadatas"][idx] if results["metadatas"] else {},
+                chunk_id=str(point.id),
+                text=text,
+                metadata=metadata,
                 embedding=embedding,
             )
         
@@ -441,29 +531,30 @@ class VectorStorage:
         if not chunk_ids:
             return []
         
-        include = ["documents", "metadatas"]
-        if include_embeddings:
-            include.append("embeddings")
-        
-        results = self._collection.get(
+        results = self._client.retrieve(
+            collection_name=self.collection_name,
             ids=chunk_ids,
-            include=include,
+            with_payload=True,
+            with_vectors=include_embeddings,
         )
         
         chunks = []
         
-        if results and results["ids"]:
-            for i, chunk_id in enumerate(results["ids"]):
-                embedding = None
-                if include_embeddings and results.get("embeddings"):
-                    embedding = results["embeddings"][i]
-                
-                chunks.append(self._metadata_to_chunk_data(
-                    chunk_id=chunk_id,
-                    text=results["documents"][i] if results["documents"] else "",
-                    metadata=results["metadatas"][i] if results["metadatas"] else {},
-                    embedding=embedding,
-                ))
+        for point in results:
+            payload = point.payload or {}
+            text = payload.get("text", "")
+            metadata = self._payload_to_metadata(payload)
+            
+            embedding = None
+            if include_embeddings and point.vector:
+                embedding = list(point.vector) if not isinstance(point.vector, list) else point.vector
+            
+            chunks.append(self._metadata_to_chunk_data(
+                chunk_id=str(point.id),
+                text=text,
+                metadata=metadata,
+                embedding=embedding,
+            ))
         
         return chunks
     
@@ -482,29 +573,40 @@ class VectorStorage:
         Returns:
             List of chunk data dictionaries.
         """
-        include = ["documents", "metadatas"]
-        if include_embeddings:
-            include.append("embeddings")
-        
-        results = self._collection.get(
-            where={"document_id": document_id},
-            include=include,
-        )
+        query_filter = self._build_filter({"document_id": document_id})
         
         chunks = []
+        offset = None
         
-        if results and results["ids"]:
-            for i, chunk_id in enumerate(results["ids"]):
+        while True:
+            results, next_offset = self._client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                with_payload=True,
+                with_vectors=include_embeddings,
+                limit=100,
+                offset=offset,
+            )
+            
+            for point in results:
+                payload = point.payload or {}
+                text = payload.get("text", "")
+                metadata = self._payload_to_metadata(payload)
+                
                 embedding = None
-                if include_embeddings and results.get("embeddings"):
-                    embedding = results["embeddings"][i]
+                if include_embeddings and point.vector:
+                    embedding = list(point.vector) if not isinstance(point.vector, list) else point.vector
                 
                 chunks.append(self._metadata_to_chunk_data(
-                    chunk_id=chunk_id,
-                    text=results["documents"][i] if results["documents"] else "",
-                    metadata=results["metadatas"][i] if results["metadatas"] else {},
+                    chunk_id=str(point.id),
+                    text=text,
+                    metadata=metadata,
                     embedding=embedding,
                 ))
+            
+            if next_offset is None:
+                break
+            offset = next_offset
         
         return chunks
     
@@ -516,10 +618,13 @@ class VectorStorage:
             chunk_id: Chunk ID to delete.
             
         Returns:
-            True if deleted (always returns True for Chroma).
+            True if deleted successfully.
         """
         try:
-            self._collection.delete(ids=[chunk_id])
+            self._client.delete(
+                collection_name=self.collection_name,
+                points_selector=PointIdsList(points=[chunk_id]),
+            )
             return True
         except Exception:
             return False
@@ -538,7 +643,10 @@ class VectorStorage:
             return 0
         
         try:
-            self._collection.delete(ids=chunk_ids)
+            self._client.delete(
+                collection_name=self.collection_name,
+                points_selector=PointIdsList(points=chunk_ids),
+            )
             return len(chunk_ids)
         except Exception:
             return 0
@@ -553,14 +661,23 @@ class VectorStorage:
         Returns:
             Number of chunks deleted.
         """
-        # First get all chunk IDs for this document
+        # First count chunks to return accurate number
         chunks = self.get_by_document(document_id)
-        chunk_ids = [c["chunk_id"] for c in chunks]
+        count = len(chunks)
         
-        if not chunk_ids:
+        if count == 0:
             return 0
         
-        return self.delete_many(chunk_ids)
+        query_filter = self._build_filter({"document_id": document_id})
+        
+        try:
+            self._client.delete(
+                collection_name=self.collection_name,
+                points_selector=FilterSelector(filter=query_filter),
+            )
+            return count
+        except Exception:
+            return 0
     
     def update_embedding(self, chunk_id: str, embedding: List[float]) -> bool:
         """
@@ -576,9 +693,14 @@ class VectorStorage:
         self._validate_embedding(embedding, chunk_id)
         
         try:
-            self._collection.update(
-                ids=[chunk_id],
-                embeddings=[embedding],
+            self._client.update_vectors(
+                collection_name=self.collection_name,
+                points=[
+                    PointVectors(
+                        id=chunk_id,
+                        vector=embedding,
+                    )
+                ],
             )
             return True
         except Exception:
@@ -596,9 +718,10 @@ class VectorStorage:
             True if updated successfully.
         """
         try:
-            self._collection.update(
-                ids=[chunk_id],
-                metadatas=[metadata],
+            self._client.set_payload(
+                collection_name=self.collection_name,
+                payload=metadata,
+                points=[chunk_id],
             )
             return True
         except Exception:
@@ -614,8 +737,13 @@ class VectorStorage:
         Returns:
             True if chunk exists.
         """
-        result = self._collection.get(ids=[chunk_id])
-        return bool(result and result["ids"])
+        results = self._client.retrieve(
+            collection_name=self.collection_name,
+            ids=[chunk_id],
+            with_payload=False,
+            with_vectors=False,
+        )
+        return len(results) > 0
     
     def count(self) -> int:
         """
@@ -624,7 +752,8 @@ class VectorStorage:
         Returns:
             Number of chunks.
         """
-        return self._collection.count()
+        collection_info = self._client.get_collection(self.collection_name)
+        return collection_info.points_count
     
     def count_by_document(self, document_id: str) -> int:
         """
@@ -636,11 +765,14 @@ class VectorStorage:
         Returns:
             Number of chunks for the document.
         """
-        results = self._collection.get(
-            where={"document_id": document_id},
-            include=[],  # Don't need data, just count
+        query_filter = self._build_filter({"document_id": document_id})
+        
+        result = self._client.count(
+            collection_name=self.collection_name,
+            count_filter=query_filter,
         )
-        return len(results["ids"]) if results and results["ids"] else 0
+        
+        return result.count
     
     def list_documents(self) -> List[str]:
         """
@@ -649,15 +781,25 @@ class VectorStorage:
         Returns:
             List of unique document IDs.
         """
-        results = self._collection.get(include=["metadatas"])
-        
-        if not results or not results["metadatas"]:
-            return []
-        
         document_ids = set()
-        for metadata in results["metadatas"]:
-            if metadata and "document_id" in metadata:
-                document_ids.add(metadata["document_id"])
+        offset = None
+        
+        while True:
+            results, next_offset = self._client.scroll(
+                collection_name=self.collection_name,
+                with_payload=["document_id"],
+                with_vectors=False,
+                limit=100,
+                offset=offset,
+            )
+            
+            for point in results:
+                if point.payload and "document_id" in point.payload:
+                    document_ids.add(point.payload["document_id"])
+            
+            if next_offset is None:
+                break
+            offset = next_offset
         
         return list(document_ids)
     
@@ -668,24 +810,36 @@ class VectorStorage:
         Returns:
             VectorStoreStats with store information.
         """
-        results = self._collection.get(include=["metadatas"])
-        
-        total_chunks = 0
         chunks_by_language: Dict[str, int] = {}
         chunks_by_document: Dict[str, int] = {}
+        total_chunks = 0
         
-        if results and results["metadatas"]:
-            total_chunks = len(results["metadatas"])
+        offset = None
+        
+        while True:
+            results, next_offset = self._client.scroll(
+                collection_name=self.collection_name,
+                with_payload=["language", "document_id"],
+                with_vectors=False,
+                limit=100,
+                offset=offset,
+            )
             
-            for metadata in results["metadatas"]:
-                if metadata:
-                    # Count by language
-                    lang = metadata.get("language", "unknown")
-                    chunks_by_language[lang] = chunks_by_language.get(lang, 0) + 1
-                    
-                    # Count by document
-                    doc_id = metadata.get("document_id", "unknown")
-                    chunks_by_document[doc_id] = chunks_by_document.get(doc_id, 0) + 1
+            for point in results:
+                total_chunks += 1
+                payload = point.payload or {}
+                
+                # Count by language
+                lang = payload.get("language", "unknown")
+                chunks_by_language[lang] = chunks_by_language.get(lang, 0) + 1
+                
+                # Count by document
+                doc_id = payload.get("document_id", "unknown")
+                chunks_by_document[doc_id] = chunks_by_document.get(doc_id, 0) + 1
+            
+            if next_offset is None:
+                break
+            offset = next_offset
         
         return VectorStoreStats(
             total_chunks=total_chunks,
@@ -713,7 +867,7 @@ class VectorStorage:
         
         # Delete and recreate collection
         self._client.delete_collection(self.collection_name)
-        self._collection = self._get_or_create_collection()
+        self._ensure_collection_exists()
         
         return count
     
@@ -721,17 +875,18 @@ class VectorStorage:
         """
         Persist the vector store to disk.
         
-        Only needed for persistent storage mode.
+        Note: Qdrant automatically persists data when using persistent storage,
+        so this method is a no-op. Kept for backward compatibility.
         """
-        if self.persist_directory:
-            self._client.persist()
+        # Qdrant auto-persists, no action needed
+        pass
     
     def reset(self) -> None:
         """
         Reset the vector store (delete and recreate collection).
         """
         self._client.delete_collection(self.collection_name)
-        self._collection = self._get_or_create_collection()
+        self._ensure_collection_exists()
 
 
 def create_vector_storage_from_config(config: Any) -> VectorStorage:
@@ -744,8 +899,9 @@ def create_vector_storage_from_config(config: Any) -> VectorStorage:
     Returns:
         Configured VectorStorage instance.
     """
+    # Consider renaming to config.vector_store_path in the future
     return VectorStorage(
-        persist_directory=config.chroma_path,
+        persist_directory=config.qdrant_path,
         collection_name="chunks",
         embedding_dimension=1536,  # Cohere multilingual dimension
     )

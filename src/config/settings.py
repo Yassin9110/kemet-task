@@ -70,8 +70,8 @@ class PipelineConfig:
     raw_files_dir: str = "raw"
     """Subdirectory name for raw file storage."""
     
-    chroma_dir: str = "chroma"
-    """Subdirectory name for Chroma vector database."""
+    qdrant_dir: str = "qdrant_db"
+    """Subdirectory name for Qdrant vector database."""
     
     documents_filename: str = "documents.json"
     """Filename for documents registry."""
@@ -112,10 +112,10 @@ class PipelineConfig:
         return os.path.join(self.base_data_path, self.raw_files_dir)
     
     @property
-    def chroma_path(self) -> str:
-        """Full path to Chroma database directory."""
-        return os.path.join(self.base_data_path, self.chroma_dir)
-    
+    def qdrant_path(self) -> str:
+        """Full path to Qdrant database directory."""
+        return os.path.join(self.base_data_path, self.qdrant_dir)
+
     @property
     def documents_path(self) -> str:
         """Full path to documents JSON file."""
