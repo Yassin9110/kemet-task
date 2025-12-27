@@ -32,6 +32,9 @@ class PipelineConfig:
     # Overlap Settings
     overlap_tokens: int = 50
     """Token overlap between consecutive chunks (English)."""
+
+    target_tokens: int = 128
+    """Target size for chunks."""
     
     arabic_overlap_multiplier: float = 1.2
     """Multiplier for Arabic text overlap (default: 50 × 1.2 = 60)."""
@@ -44,13 +47,13 @@ class PipelineConfig:
     """Documents above this token count: 3 levels (doc → section → chunk)."""
     
     # Embedding Settings
-    embedding_model: str = "embed-multilingual-v3.0"
+    embedding_model: str = "embed-v4.0"
     """Cohere embedding model name."""
     
     embedding_batch_size: int = 32
     """Number of chunks per embedding API call."""
     
-    cohere_api_key: str = ""
+    cohere_api_key: str = "7HKwro64I8DEHeluTc9CJMa09XgNcYM5IuYkNUn9"
     """Cohere API key. If empty, will attempt to load from COHERE_API_KEY env var."""
     
     # Semantic Edges

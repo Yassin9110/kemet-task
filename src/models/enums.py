@@ -36,7 +36,6 @@ class BlockType(Enum):
     HEADING = "heading"
     TABLE = "table"
     LIST = "list"
-    CODE = "code"
     UNKNOWN = "unknown"
 
 

@@ -23,35 +23,35 @@ class ParentChunk:
     and are returned to the LLM for context after retrieval.
     """
     
-    parent_id: str
-    """Unique identifier for this parent chunk (UUID)."""
+    parent_id: str # Unique identifier for this parent chunk (UUID).
     
-    document_id: str
-    """ID of the source document."""
     
-    text: str
-    """Full text content of the parent chunk."""
+    document_id: str # ID of the source document.
     
-    token_count: int
-    """Number of tokens in this chunk."""
     
-    section_path: List[str] = field(default_factory=list)
-    """Hierarchical section path, e.g., ['Chapter 1', 'Introduction']."""
+    text: str # Full text content of the parent chunk.
     
-    page_range: Optional[Tuple[int, int]] = None
-    """Start and end page numbers (1-indexed), inclusive."""
     
-    language: Language = Language.EN
-    """Primary language of the chunk content."""
+    token_count: int # Number of tokens in this chunk.
     
-    child_ids: List[str] = field(default_factory=list)
-    """List of child chunk IDs contained in this parent."""
     
-    created_at: datetime = field(default_factory=datetime.now)
-    """Timestamp when this chunk was created."""
+    section_path: List[str] = field(default_factory=list) # Hierarchical section path, e.g., ['Chapter 1', 'Introduction'].
     
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    """Additional metadata."""
+    
+    page_range: Optional[Tuple[int, int]] = None # Start and end page numbers (1-indexed), inclusive.
+    
+    
+    language: Language = Language.EN # Primary language of the chunk content.
+    
+    
+    child_ids: List[str] = field(default_factory=list) # List of child chunk IDs contained in this parent.
+    
+    
+    created_at: datetime = field(default_factory=datetime.now) # Timestamp when this chunk was created.
+    
+    
+    metadata: Dict[str, Any] = field(default_factory=dict) # Additional metadata.
+    
     
     def __post_init__(self) -> None:
         """Validate chunk data after initialization."""
@@ -188,50 +188,36 @@ class ChildChunk:
     for retrieval. On match, the parent chunk is returned for context.
     """
     
-    chunk_id: str
-    """Unique identifier for this child chunk (UUID)."""
+    chunk_id: str # Unique identifier for this child chunk (UUID).
     
-    document_id: str
-    """ID of the source document."""
+    document_id: str # ID of the source document.
     
-    text: str
-    """Text content of this chunk."""
+    text: str # Text content of this chunk.
     
-    token_count: int
-    """Number of tokens in this chunk."""
+    token_count: int # Number of tokens in this chunk.
     
-    language: Language
-    """Detected language of this chunk."""
+    language: Language # Detected language of this chunk.
     
-    block_type: BlockType
-    """Structural type of the source block."""
+    block_type: BlockType # Structural type of the source block.
     
-    parent_id: Optional[str] = None
-    """ID of parent chunk (None if document uses 1-level hierarchy)."""
+    parent_id: Optional[str] = None # ID of parent chunk (None if document uses 1-level hierarchy).
     
-    section_path: List[str] = field(default_factory=list)
-    """Hierarchical section path."""
+    section_path: List[str] = field(default_factory=list) # Hierarchical section path.
     
-    page_number: Optional[int] = None
-    """Source page number (1-indexed)."""
+    page_number: Optional[int] = None # Source page number (1-indexed).
     
-    position_in_parent: int = 0
-    """Position within parent chunk (0-indexed)."""
+    position_in_parent: int = 0 # Position within parent chunk (0-indexed).
     
-    prev_chunk_id: Optional[str] = None
-    """ID of the previous sibling chunk."""
+    prev_chunk_id: Optional[str] = None # ID of the previous sibling chunk.
     
-    next_chunk_id: Optional[str] = None
-    """ID of the next sibling chunk."""
+    next_chunk_id: Optional[str] = None # ID of the next sibling chunk.
     
-    embedding: Optional[List[float]] = None
-    """Vector embedding (populated after embedding stage)."""
+    embedding: List[float] = None # Vector embedding (populated after embedding stage).
     
-    created_at: datetime = field(default_factory=datetime.now)
-    """Timestamp when this chunk was created."""
+    created_at: datetime = field(default_factory=datetime.now) # Timestamp when this chunk was created.
     
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    """Additional metadata."""
+    metadata: Dict[str, Any] = field(default_factory=dict) # Additional metadata.
+    
     
     def __post_init__(self) -> None:
         """Validate chunk data after initialization."""

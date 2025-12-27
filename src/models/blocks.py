@@ -21,26 +21,19 @@ class ExtractedBlock:
     Contains raw, unprocessed text with structural metadata.
     """
     
-    block_id: str
-    """Unique identifier for this block (UUID)."""
+    block_id: str # Unique identifier for this block (UUID).
     
-    raw_text: str
-    """Original extracted text, unprocessed."""
+    raw_text: str # Original extracted text, unprocessed.
     
-    block_type: BlockType
-    """Structural classification of the block."""
+    block_type: BlockType # Structural classification of the block.
     
-    source_offset: int = 0
-    """Character offset position in the original document."""
+    source_offset: int = 0 # Character offset position in the original document.
     
-    page_number: Optional[int] = None
-    """Source page number (1-indexed), if applicable."""
+    page_number: Optional[int] = None # Source page number (1-indexed), if applicable.
     
-    heading_level: Optional[int] = None
-    """Heading level 1-6 if block_type is HEADING, else None."""
+    heading_level: Optional[int] = None # Heading level 1-6 if block_type is HEADING, else None.
     
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    """Additional extractor-specific metadata."""
+    metadata: Dict[str, Any] = field(default_factory=dict) # Additional extractor-specific metadata.
     
     def __post_init__(self) -> None:
         """Validate block data after initialization."""
@@ -92,29 +85,21 @@ class NormalizedBlock:
     Contains cleaned text ready for structural parsing and chunking.
     """
     
-    block_id: str
-    """Unique identifier, same as source ExtractedBlock."""
+    block_id: str # Unique identifier, same as source ExtractedBlock.
     
-    text: str
-    """Normalized and cleaned text."""
+    text: str # Normalized and cleaned text.
+
+    block_type: BlockType # Structural classification of the block.
     
-    block_type: BlockType
-    """Structural classification of the block."""
+    original_text: Optional[str] = None # Original extracted text for reference.
+
+    source_offset: int = 0 # Character offset position in the original document.
     
-    language: Language
-    """Detected language of the block content."""
+    page_number: Optional[int] = None # Source page number (1-indexed), if applicable.
     
-    source_offset: int = 0
-    """Character offset position in the original document."""
+    heading_level: Optional[int] = None # Heading level 1-6 if block_type is HEADING, else None.
     
-    page_number: Optional[int] = None
-    """Source page number (1-indexed), if applicable."""
-    
-    heading_level: Optional[int] = None
-    """Heading level 1-6 if block_type is HEADING, else None."""
-    
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    """Additional metadata from extraction and normalization."""
+    metadata: Dict[str, Any] = field(default_factory=dict) # Additional metadata from extraction and normalization.
     
     def __post_init__(self) -> None:
         """Validate block data after initialization."""
@@ -192,6 +177,7 @@ class NormalizedBlock:
         return cls(
             block_id=extracted.block_id,
             text=normalized_text,
+            original_text=extracted.raw_text,
             block_type=extracted.block_type,
             language=language,
             source_offset=extracted.source_offset,
