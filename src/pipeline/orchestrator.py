@@ -134,7 +134,7 @@ class PipelineOrchestrator:
         result = pipeline.ingest("/path/to/document.pdf")
     """
     
-    def __init__(self, config: Optional[PipelineConfig] = None):
+    def __init__(self, vector_storage: VectorStorage, config: Optional[PipelineConfig] = None ):
         """
         Initialize the pipeline orchestrator.
         
@@ -143,7 +143,7 @@ class PipelineOrchestrator:
         """
         self.config = config or PipelineConfig()
         self.logger = create_logger_from_config(self.config)
-        self.vector_storage = create_vector_storage_from_config(self.config)
+        self.vector_storage = vector_storage
         
         # Initialize stages
         self._init_stages()

@@ -12,10 +12,11 @@ from logging import Logger
 from src.config.settings import PipelineConfig
 from src.models.chunks import ParentChunk, ChildChunk
 from src.models.enums import Language
-from src.storage.json_storage import JSONStorage
 from src.storage.vector_storage import VectorStorage
 from src.embedding.cohere_embedder import CohereEmbedder
 from src.logging.pipeline_logger import create_logger_from_config
+from src.storage.json_storage import StorageManager
+
 
 
 @dataclass
@@ -47,7 +48,7 @@ class Searcher:
         results = searcher.search("What is machine learning?", top_k=5)
     """
     
-    def __init__(self, config: PipelineConfig):
+    def __init__(self, config: PipelineConfig, vector_storage: VectorStorage):
         """
         Initialize the searcher.
         
@@ -56,8 +57,8 @@ class Searcher:
         """
         self.config = config
         self.logger = create_logger_from_config(config)
-        self.json_storage = JSONStorage(config)
-        self.vector_storage = VectorStorage(config)
+        self.json_storage = StorageManager.from_config(self.config)
+        self.vector_storage = vector_storage
         self._embedder: Optional[CohereEmbedder] = None
     
     @property
@@ -91,6 +92,7 @@ class Searcher:
         
         # Embed query
         query_embedding = self.embedder.embed_query(query)
+        print(f"\n query embedded suuccessfully \n")
         
         # Build filters
         filters: Dict = {}
@@ -103,7 +105,7 @@ class Searcher:
         chunks, scores = self.vector_storage.search(
             query_embedding=query_embedding,
             top_k=top_k,
-            filters=filters if filters else None
+            where=filters
         )
         
         # Build results

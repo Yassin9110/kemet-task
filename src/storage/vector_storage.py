@@ -399,35 +399,34 @@ class VectorStorage:
         """
         query_filter = self._build_filter(where)
         
-        results = self._client.search(
+        results = self._client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=top_k,
             query_filter=query_filter,
             with_payload=True,
             with_vectors=include_embeddings,
         )
-        
+        print(f"\n\n Results obtained from search: {results} \n\n")
         search_results = []
         
-        for hit in results:
-            payload = hit.payload or {}
-            text = payload.get("text", "")
+        for point in results.points:
+            payload = point.payload
+            text = payload.get("text")
             metadata = self._payload_to_metadata(payload)
             
             # Qdrant returns score (higher = more similar for cosine)
             # Convert to distance for backward compatibility
-            score = hit.score
-            distance = 1.0 - score
+            score = point.score
+            
             
             embedding = None
-            if include_embeddings and hit.vector:
-                embedding = list(hit.vector) if not isinstance(hit.vector, list) else hit.vector
+            if include_embeddings and point.vector:
+                embedding = list(point.vector) if not isinstance(point.vector, list) else point.vector
             
             search_results.append(SearchResult(
-                chunk_id=str(hit.id),
+                chunk_id=str(point.id),
                 text=text,
-                distance=distance,
                 score=score,
                 metadata=metadata,
                 embedding=embedding,

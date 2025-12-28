@@ -17,6 +17,8 @@ from src.retrieval.searcher import Searcher, SearchResponse
 from src.retrieval.context_expander import ContextExpander, ExpandedContext
 from src.models.document import Document
 from src.models.chunks import ParentChunk, ChildChunk
+from src.storage.vector_storage import create_vector_storage_from_config
+
 
 
 class RAGPipeline:
@@ -72,9 +74,14 @@ class RAGPipeline:
                 self.config.children_path = os.path.join(data_dir, "children.json")
                 self.config.edges_path = os.path.join(data_dir, "edges.json")
                 self.config.chroma_path = os.path.join(data_dir, "chroma")
+
+
+
+        
         
         # Initialize components
-        self.orchestrator = PipelineOrchestrator(self.config)
+        self.vector_storage = create_vector_storage_from_config(self.config)
+        self.orchestrator = PipelineOrchestrator(vector_storage = self.vector_storage, config= self.config )
         self._searcher: Optional[Searcher] = None
         self._expander: Optional[ContextExpander] = None
     
@@ -82,7 +89,7 @@ class RAGPipeline:
     def searcher(self) -> Searcher:
         """Lazy initialization of searcher."""
         if self._searcher is None:
-            self._searcher = Searcher(self.config)
+            self._searcher = Searcher(self.config, self.vector_storage)
         return self._searcher
     
     @property
@@ -804,18 +811,100 @@ def get_context(
     pipeline = RAGPipeline(cohere_api_key=cohere_api_key)
     return pipeline.get_retrieval_context(query, top_k=top_k, max_tokens=max_tokens)
 
+def query_file(
+    file_path: str,
+    query: str,
+    top_k: int = 5,
+    return_context: bool = True,
+    cohere_api_key: Optional[str] = None
+) -> str | SearchResponse:
+    """
+    Convenience function to ingest a file (if needed) and query it.
+    
+    This function handles both ingestion and search in a single call.
+    If the file has already been ingested, it skips ingestion and 
+    proceeds directly to search.
+    
+    Args:
+        file_path: Path to the document file.
+        query: Search query text.
+        top_k: Number of results to return (default: 5).
+        return_context: If True, return formatted context string for LLM.
+                        If False, return full SearchResponse object.
+        cohere_api_key: Optional API key (falls back to COHERE_API_KEY env var).
+        
+    Returns:
+        str: Combined context string if return_context=True.
+        SearchResponse: Full search results if return_context=False.
+        
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        Exception: If ingestion or search fails.
+        
+    Example:
+        # Get context for LLM
+        context = query_file("document.pdf", "What is machine learning?")
+        
+        # Get full search response
+        response = query_file("document.pdf", "neural networks", return_context=False)
+    """
+    # Validate file exists
+    file_path = str(Path(file_path).resolve())
+    if not Path(file_path).exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    # Initialize pipeline
+    pipeline = RAGPipeline(cohere_api_key=cohere_api_key)
+    
+    # Check if file is already ingested
+    # existing_documents = pipeline.list_documents()
+    # file_already_ingested = any(
+    #     doc.file_path == file_path for doc in existing_documents
+    # )
+    
+    # Ingest if needed
+    # if not file_already_ingested:
+    result = pipeline.ingest(file_path)
+    if result.status.value != "completed":
+        raise Exception(f"Ingestion failed: {result.error_message}")
+    
+    # Return results based on return_context flag
+    if return_context:
+        return pipeline.get_retrieval_context(query, top_k=top_k)
+    else:
+        return pipeline.search(query, top_k=top_k)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the RAG Ingestion Pipeline.")
-    parser.add_argument("file", type=str, help="Path to the file to ingest.")
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser(description="Run the RAG Ingestion Pipeline.")
+    # parser.add_argument("file", type=str, help="Path to the file to ingest.")
+    # args = parser.parse_args()
 
-    # Initialize the pipeline
-    pipeline = RAGPipeline()
+    # # Initialize the pipeline
+    # pipeline = RAGPipeline()
 
-    # Ingest the file
-    try:
-        result = pipeline.ingest(args.file)
-        print("Ingestion successful:", result)
-    except Exception as e:
-        print("Error during ingestion:", e)
+    # # Ingest the file
+    # try:
+    #     result = pipeline.ingest(args.file)
+    #     print("Ingestion successful:", result)
+    # except Exception as e:
+    #     print("Error during ingestion:", e)
+
+
+    # Simple usage - get context string for LLM
+    context = query_file("docs\نظرية_النسبية_simple.txt", "ما هي النظرية النسبية؟")
+    print(context)
+
+    # # Get full search response with scores and metadata
+    # response = query_file("path/to/document.pdf", "key concepts", return_context=False)
+    # for result in response.results:
+    #     print(f"Score: {result.score}, Text: {result.chunk.text[:100]}")
+
+    # # With custom parameters
+    # context = query_file(
+    #     file_path="research_paper.pdf",
+    #     query="methodology used",
+    #     top_k=10,
+    #     return_context=True,
+    #     cohere_api_key="your-api-key"
+    # )
